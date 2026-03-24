@@ -3,16 +3,15 @@ import pdfplumber
 import re
 import os
 from openai import OpenAI
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 
-# Load API key
+# ---------- SAFE API KEY LOAD ----------
 api_key = os.getenv("OPENAI_API_KEY")
 
 if not api_key:
-    st.error("Please set OPENAI_API_KEY in Streamlit secrets")
+    st.error("⚠️ API key not found. Please add OPENAI_API_KEY in Streamlit Secrets.")
     st.stop()
 
+# Initialize client ONLY if key exists
 client = OpenAI(api_key=api_key)
 
 # ---------- PDF TEXT ----------

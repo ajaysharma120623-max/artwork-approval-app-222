@@ -4,15 +4,22 @@ import re
 import os
 from openai import OpenAI
 
-# ---------- SAFE API KEY LOAD ----------
+# ---------- SAFE API KEY ----------
 api_key = os.getenv("OPENAI_API_KEY")
 
 if not api_key:
-    st.error("⚠️ API key not found. Please add OPENAI_API_KEY in Streamlit Secrets.")
+    st.error("⚠️ Please add OPENAI_API_KEY in Streamlit Secrets")
     st.stop()
 
-# Initialize client ONLY if key exists
 client = OpenAI(api_key=api_key)
+
+# ---------- PDF LIB (SAFE IMPORT) ----------
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 # ---------- PDF TEXT ----------
 def extract_text(file):
@@ -24,34 +31,28 @@ def extract_text(file):
                 text += content + "\n"
     return text
 
-# ---------- CHECKS ----------
+# ---------- PRE-PRINT CHECKS ----------
 def run_checks(text):
     issues = []
-    text_lower = text.lower()
+    t = text.lower()
 
-    # 🔴 Pre-print empty fields
-    if "batch" in text_lower and "____" in text:
+    # Empty fields
+    if "batch" in t and "____" in text:
         issues.append(("Batch number box is empty", "High"))
 
-    if "expiry" in text_lower and "____" in text:
+    if "expiry" in t and "____" in text:
         issues.append(("Expiry date box is empty", "High"))
 
-    if "mfg" in text_lower and "____" in text:
+    if "mfg" in t and "____" in text:
         issues.append(("Manufacturing date box is empty", "High"))
 
-    # 🔴 Mandatory headings
-    headings = [
-        "composition",
-        "dose",
-        "storage",
-        "indications"
-    ]
-
+    # Headings
+    headings = ["composition", "dose", "storage", "indications"]
     for h in headings:
-        if h not in text_lower:
+        if h not in t:
             issues.append((f"Missing heading: {h}", "Medium"))
 
-    # 🔴 Strength formats
+    # Strength formats
     patterns = [
         r"each\s*250\s*mg",
         r"each\s*500\s*mg",
@@ -59,16 +60,15 @@ def run_checks(text):
         r"each\s*10\s*g"
     ]
 
-    if not any(re.search(p, text_lower) for p in patterns):
+    if not any(re.search(p, t) for p in patterns):
         issues.append(("Missing standard strength format (e.g. Each 500 mg contains)", "Medium"))
 
     return issues
 
-# ---------- BOTANICAL CHECK ----------
+# ---------- BOTANICAL ----------
 def check_botanical(text):
     issues = []
 
-    # simple pattern: two-word latin names
     matches = re.findall(r"\b[A-Z][a-z]+\s[a-z]+\b", text)
 
     for name in matches:
@@ -89,7 +89,7 @@ def detect_claims(text):
     issues = []
     for p in patterns:
         if re.search(p, text.lower()):
-            issues.append((f"Prohibited claim detected: {p}", "High"))
+            issues.append((f"Prohibited claim detected", "High"))
 
     return issues
 
@@ -109,14 +109,14 @@ Check:
 - Formatting issues
 - Suggest corrections
 
-Keep answer structured and clear."""
+Keep it structured and professional."""
                 },
                 {"role": "user", "content": text}
             ]
         )
         return response.choices[0].message.content
-    except:
-        return "AI analysis failed"
+    except Exception as e:
+        return f"AI analysis failed: {str(e)}"
 
 # ---------- SCORE ----------
 def calculate_score(issues):
@@ -132,11 +132,13 @@ def calculate_score(issues):
 
 # ---------- PDF REPORT ----------
 def generate_pdf(issues, ai_text):
+    if not REPORTLAB_AVAILABLE:
+        return None
+
     doc = SimpleDocTemplate("report.pdf")
     styles = getSampleStyleSheet()
 
     content = []
-
     content.append(Paragraph("Artwork Compliance Report", styles["Title"]))
     content.append(Spacer(1, 10))
 
@@ -145,7 +147,7 @@ def generate_pdf(issues, ai_text):
         content.append(Spacer(1, 5))
 
     content.append(Spacer(1, 10))
-    content.append(Paragraph("AI Analysis:", styles["Heading2"]))
+    content.append(Paragraph("AI Analysis", styles["Heading2"]))
     content.append(Paragraph(ai_text, styles["Normal"]))
 
     doc.build(content)
@@ -173,31 +175,37 @@ if uploaded_file:
     score = calculate_score(issues)
     ai_text = ai_analysis(text)
 
-    # ---------- TAB 1 ----------
+    # TAB 1
     with tabs[0]:
         st.subheader("Compliance Score")
         st.metric("Score", f"{score}/100")
         st.progress(score / 100)
 
-    # ---------- TAB 2 ----------
+    # TAB 2
     with tabs[1]:
-        for issue, severity in issues:
-            if severity == "High":
-                st.error(issue)
-            elif severity == "Medium":
-                st.warning(issue)
-            else:
-                st.info(issue)
+        if issues:
+            for issue, severity in issues:
+                if severity == "High":
+                    st.error(issue)
+                elif severity == "Medium":
+                    st.warning(issue)
+                else:
+                    st.info(issue)
+        else:
+            st.success("No issues found")
 
-    # ---------- TAB 3 ----------
+    # TAB 3
     with tabs[2]:
         st.write(ai_text)
 
-    # ---------- DOWNLOAD ----------
+    # DOWNLOAD
     pdf = generate_pdf(issues, ai_text)
 
-    st.download_button(
-        "📥 Download PDF Report",
-        pdf,
-        file_name="compliance_report.pdf"
-    )
+    if pdf:
+        st.download_button(
+            "📥 Download PDF Report",
+            pdf,
+            file_name="compliance_report.pdf"
+        )
+    else:
+        st.warning("⚠️ PDF feature not available (reportlab not installed)")
